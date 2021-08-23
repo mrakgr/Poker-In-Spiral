@@ -3,7 +3,5 @@ modules:
     types-
     conv- 
     serialization/
-        dense/
-            array
-        sparse/
-            int
+        array
+        int
