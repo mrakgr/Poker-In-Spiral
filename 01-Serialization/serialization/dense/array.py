@@ -9,7 +9,7 @@ class PU:
 
         i - Starting position of array 'ar'.
 
-        ar - An array. Can be a Python list, or Numpy or a PyTorch 1d vector.
+        ar - An 1d array. Can be anything satisfying the array interface constraints.
         """
         raise NotImplementedError()
     def unpickle(self,i : int,ar) -> Tuple[object,Literal[1, 0]]:
@@ -22,6 +22,19 @@ class PU:
         i - Starting position of array 'ar'.
         """
         raise NotImplementedError()
+
+def serialize(schema : PU,x):
+    ar = [0] * schema.size
+    schema.pickle(x,0,ar)
+    return ar
+
+def deserialize(schema : PU,ar):
+    x,c = schema.unpickle(0,ar)
+    if c != 1: raise Exception("Invalid format.")
+    return x
+
+def round_trip_assert(schema : PU,x):
+    assert x == deserialize(schema,serialize(schema,x)), "PU round trip failed."
 
 class Unit(PU):
     def __init__(self) -> None:
@@ -61,13 +74,12 @@ class BinInt(PU):
     """
     def __init__(self,size : int) -> None:
         super().__init__()
-        assert 1 <= size <= 64, "The field size has to be in the [1,64] range."
-        q = 1 << (size - 1)
-        self.max_x = q + (q - 1)
+        assert 1 <= size <= 62, "The field size has to be in the [1,62] range."
+        self.x_nearTo = 2 ** size - 1
         self.size = size
 
     def pickle(self,x : int,i_start,ar):
-        assert 0 <= x < self.max_x, f'Pickle failure. Bin int value out of bounds. Got: {x} Size: {self.max_x}'
+        assert 0 <= x < self.x_nearTo, f'Pickle failure. Bin int value out of bounds. Got: {x} Size: {self.x_nearTo}'
         x += 1
         for i in range(self.size):
             q = 1 << (self.size - i - 1)
@@ -88,37 +100,58 @@ class Tuple(PU):
         for x in pus: self.size += x.size
         self.pus = pus
 
-    def pickle(self,xs,i_start,ar):
-         i = i_start
+    def pickle(self,xs,i,ar):
          for x,pu in zip(xs,self.pus): 
             pu.pickle(x,i,ar)
             i += pu.size
-    def unpickle(self,i_start,ar):
-        i,c,l = i_start,0,[]
-        for pu in self.pus: x,c2 = pu.unpickle(i,ar); i += pu.size; c += c2; l.append(x)
+    def unpickle(self,i,ar):
+        c,l = 0,[]
+        for pu in self.pus: 
+            x,c2 = pu.unpickle(i,ar)
+            i += pu.size
+            c += c2
+            l.append(x)
         assert c == 0 or c == len(self.pus), "Unpickling failure. The tuple should have all of its elements be either active or inactive."
-        return tuple(l), c // len(self.pus)
+        return tuple(l), 0 if c == 0 else 1
 
-def serialize(schema : PU,x):
-    ar = [0] * schema.size
-    schema.pickle(x,0,ar)
-    return ar
+class Array(PU):
+    def __init__(self,pu : PU,n : int) -> None:
+        """
+        pu - PU for the elements of the array.
 
-def deserialize(schema : PU,ar):
-    x,c = schema.unpickle(0,ar)
-    if c != 1: raise Exception("Invalid format.")
-    return x
+        n - The maximum size of the array.
+        """
+        super().__init__()
+        self.pu, self.n = pu, n
+        self.size = 1 + self.pu.size * n # The extra field is the emptiness flag which differentiates empty from inactive arrays.
 
-def test_pu(schema : PU,x):
-    x2 = deserialize(schema,serialize(schema,x))
-    if x != x2: raise Exception("PU test failed.")
+    def pickle(self,xs,i,ar):
+        assert len(xs) <= self.n, "Pickling failure. The given array is too large."
+        if len(xs) == 0: ar[i] = 1
+        i += 1
+        for x in xs: 
+            self.pu.pickle(x,i,ar)
+            i += self.pu.size
+    def unpickle(self,i,ar):
+        c_empty = ar[i]
+        assert c_empty == 0 or c_empty == 1, "Unpickling failure. The array emptiness flag should be 1 or 0."
+        c_empty = int(c_empty)
+        i += 1
 
-# [test_pu(BinInt(10),i) for i in [0,1,5,123,654]]
-# test_serializer(BinInt(20),0)
-# test_serializer(BinInt(20),8)
-# test_serializer(BinInt(20),123)
+        xs = []
+        for j in range(self.n):
+            x,c_sub = self.pu.unpickle(i,ar)
+            if j == len(xs):
+                if c_sub == 1: xs.append(x) 
+            else:
+                assert c_sub == 0, "Unpickling failure. Expected an inactive subsequence in the array unpickler."
+            i += self.pu.size
+        assert not (c_empty == 1 and 0 < len(xs)), "Unpickling failure. Empty arrays should not have active elements."
+        return xs, c_empty | min(1,len(xs))
+
 suit = Int(4)
 rank = Int(13)
 card = Tuple(suit,rank)
 stack = BinInt(7)
-print(serialize(Tuple(stack,card,card),(100,(0,0),(1,0))))
+board = Array(card,5)
+print(serialize(Tuple(stack,card,card,board),(100,(0,0),(1,0),[(2,0),(3,0),(1,5),(2,2),(0,11)])))

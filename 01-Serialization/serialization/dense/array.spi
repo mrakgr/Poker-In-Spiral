@@ -20,8 +20,8 @@ inl int forall t {number;int}. size : pu t =
         pickle = fun x (i,s : state) =>
             if 0 <= x && conv_int x < size then set s (i + conv_int x) 1
             else failwith $"f'Pickling failure. Int value out of bounds. Got: {!x} Size: {!size}'"
-        unpickle = fun (from,s : state) =>
-            inl ~(from,nearTo) = from, from+size
+        unpickle = fun (~from,s : state) =>
+            inl nearTo = from+size
             join
                 inl case,c =
                     loop.for {from nearTo} (fun i (case,c) =>
@@ -34,31 +34,6 @@ inl int forall t {number;int}. size : pu t =
                 conv_int (case - from), c
         }
 
-// Allows negative ints. Should not be used in arrays or unions.
-inl bin_sint forall t {number;int}. size : pu t =
-    assert (1 <= size && size <= 63) "The field size has to be in the [1,63] range."
-    pu {size
-        pickle = fun ~x ~(i,s : state) => join
-            inl max_x = 
-                inl q = 1 <<< (i32 size - 1)
-                q + (q - 1)
-            inl x = i64 x
-            if -max_x <= x && x < max_x then
-                loop.for {from=0; nearTo=size} (fun i' x =>
-                    inl q = 1 <<< i32 (size - i' - 1)
-                    set s (i + conv_int i') (f32 (x / q))
-                    x % q
-                    ) x |> ignore
-            else failwith $"f'Pickle failure. Bin sint value out of bounds. Got: {!x} Size: {!size}'"
-        unpickle = fun ~(from,s : state) => join
-            loop.for {from=0; nearTo=size} (fun i' w =>
-                inl x = index s (from + i')
-                if x = 0 || x = 1 then w + (conv_num x <<< i32 (size - i' - 1))
-                else failwith "Unpickling failure. The int type must either be active or inactive."
-                ) 0
-            |> fun x => x, 1
-        }
-
 // Unlike int which stores the value as a one-hot vector, this one stores it as a binary value.
 // The value 0 is stored as 1, 1 as 2 and so on. During unpickling the zero vector is considered inactive.
 // The max value is taken up by that inactive vactor. Hence the actual capacity is
@@ -66,14 +41,14 @@ inl bin_sint forall t {number;int}. size : pu t =
 inl bin_int forall t {number;int}. size : pu t =
     assert (1 <= size && size <= 64) "The field size has to be in the [1,64] range."
     pu {size
-        pickle = fun ~x ~(i,s : state) => join
+        pickle = fun ~x (~i,s : state) => join
             inl max_x = 
                 inl q = 1 <<< (i32 size - 1)
                 q + (q - 1)
             if 0 <= x && u64 x < max_x then
                 loop.for {from=0; nearTo=size} (fun i' x =>
                     inl q = 1 <<< i32 (size - i' - 1)
-                    set s (i + conv_int i') (f32 (x / q))
+                    set s (i + i') (f32 (x / q))
                     x % q
                     ) (x + 1) |> ignore
             else failwith $"f'Pickle failure. Bin int value out of bounds. Got: {!x} Size: {!max_x}'"
@@ -87,31 +62,31 @@ inl bin_int forall t {number;int}. size : pu t =
         }
 
 inl array forall t. size (pu el : pu t) : pu (a st t) =
-    inl unpickle (~from,s : state) : a _ _ * _ =
-        inl tmp : a _ _ = create size
-        inl c = 
-            inl c = index s from
-            if c = 1 || c = 0 then conv_num c else failwith "Unpickle failure. The array emptiness flag should be 1 or 0."
-        inl c' = 
-            inl from = from + 1
-            loop.for {from=0; nearTo=size} (fun i c =>
-                inl from = from + i * el.size
-                inl x, c' = el.unpickle (from,s)
-                if i = c then
-                    if c' = 1 then set tmp i x
-                    c + c'
-                else
-                    if c' <> 0 then failwith "Unpickle failure. Expected an inactive subsequence in the array unpickler."
-                    c
-                ) 0
-        if c = 1 && 0 < c' then failwith "Unpickle failure. Empty arrays should not have active elements."
-        am.init c' (index tmp), min 1 (c + c')
-    inl pickle x (i,s : state) =
-        if size < length x then failwith "Pickle failure. The given array is too large."
-        if length x = 0 then set s i 1
-        inl i = i + 1
-        am.iteri (fun idx x => el.pickle x (i + idx * el.size,s)) x
-    pu { pickle unpickle size = size * el.size + 1 }
+    pu {size = 1 + size * el.size
+        pickle = fun x (i,s : state) =>
+            if size < length x then failwith "Pickling failure. The given array is too large."
+            if length x = 0 then set s i 1
+            inl i = i + 1
+            am.iteri (fun idx x => el.pickle x (i + idx * el.size,s)) x
+        unpickle = fun (from,s : state) =>
+            inl tmp : a _ _ = create size
+            inl c_empty = 
+                inl c = index s from
+                if c = 1 || c = 0 then conv_num c else failwith "Unpickling failure. The array emptiness flag should be 1 or 0."
+            inl tmp_len = 
+                inl ~from = from + 1
+                loop.for {from=0; nearTo=size} (fun i len =>
+                    inl x, c_sub = el.unpickle (from + i * el.size,s)
+                    if i = len then
+                        if c_sub = 1 then set tmp i x
+                        len + c_sub
+                    else
+                        assert (c_sub = 0) "Unpickling failure. Expected an inactive subsequence in the array unpickler."
+                        len
+                    ) 0
+            assert (not (c_empty = 1 && 0 < tmp_len)) "Unpickling failure. Empty arrays should not have active elements."
+            am.init tmp_len (index tmp), c_empty ||| min 1 tmp_len
+        }
 
 inl pair (pu a') (pu b') =
     pu {size = a'.size + b'.size

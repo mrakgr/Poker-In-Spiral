@@ -53,7 +53,43 @@ class Unit(PU):
         return (), int(x)
 ```
 
-During serialization, the unit combinator just sets the the array to 1 at the given index.
+During serialization, the unit combinator just sets the the array to 1 at the given index. Here are two helper functions to help use these combinators.
+
+```py
+def serialize(schema : PU,x):
+    ar = [0] * schema.size
+    schema.pickle(x,0,ar)
+    return ar
+
+def deserialize(schema : PU,ar):
+    x,c = schema.unpickle(0,ar)
+    if c != 1: raise Exception("Invalid format.")
+    return x
+```
+
+Here is short example of it in action.
+
+```py
+print(serialize(Unit(),()))
+```
+```
+[1]
+```
+
+An easy way to make sure that the serializers work is to do a round trip, serializing and deserializing them back and comparing the values.
+
+```py
+def round_trip_assert(schema : PU,x):
+    assert x == deserialize(schema,serialize(schema,x)), "PU round trip failed."
+```
+
+It is used like this.
+
+```py
+round_trip_assert(Unit(),())
+```
+
+Since running the above does not raise an exception, we have some basic assurance that the serialization is correct.
 
 The next will be a PU combinator for representing integers.
 
@@ -78,19 +114,7 @@ class Int(PU):
 
 During serialization, the int combinator sets the array to 1 at the given index plus the element. Deserialization is a bit harder as it needs to find the index of that 1 by iterating over all the elements. Since we need to account for the union types, it could also be that case that all the elements are zero. Lastly we need to account for the possibility of the array having trash data and assert that all elements are either 0 or 1.
 
-This combinator has interesting functionality. Here are two helper functions to help use them.
-
-```py
-def serialize(schema : PU,x):
-    ar = [0] * schema.size
-    schema.pickle(x,0,ar)
-    return ar
-
-def deserialize(schema : PU,ar):
-    x,c = schema.unpickle(0,ar)
-    if c != 1: raise Exception("Invalid format.")
-    return x
-```
+This combinator has interesting functionality. 
 
 Here is a little example to illustrate what these PUs do.
 
@@ -110,27 +134,9 @@ serialize(Int(5),4)
 [0, 0, 0, 0, 1]
 ```
 
-The Unit combinator only ever returns a singleton array with a positive element.
-
 ```py
-serialize(Unit(),())
-```
-```
-[1]
-```
-
-An easy way to make sure that the serializers work is to serialize and deserialize them.
-
-```py
-def test_pu(schema : PU,x):
-    x2 = deserialize(schema,serialize(schema,x))
-    if x != x2: raise Exception("PU test failed.")
-```
-
-```py
-test_pu(Int(5),3)
-test_pu(Int(5),1)
-test_pu(Unit(),())
+round_trip_assert(Int(5),3)
+round_trip_assert(Int(5),1)
 ```
 
 No exception gets raised. Serializing integers to the one hot format is the simplest kind of serialization, but it is very useful. I use it for hand ranks and suits for example. It could be used for stack size if they are sufficiently small, but for those it would be better to have a proper binary serializer. Here it is.
@@ -181,7 +187,7 @@ Here are is an example of it in use.
  [1, 0, 1, 0, 0, 0, 1, 1, 1, 1]]
 ```
 
-Testing `[test_pu(BinInt(10),i) for i in [0,1,5,123,654]]` also works fine. The next combinator is where things get interesting.
+Testing `[round_trip_assert(BinInt(10),i) for i in [0,1,5,123,654]]` also works fine. The next combinator is where things get interesting.
 
 ```py
 class Tuple(PU):
@@ -230,4 +236,57 @@ print(serialize(Tuple(stack,card,card),(100,(0,0),(1,0))))
 Naturally, tuple combinators can be composed with other tuple combinators as shown in the above example. That is what makes them powerful.
 
 Before moving on to unions, one combinator worth covering is the array combinator. In poker, different betting streets have a different number of cards on the table and it would be inefficient to use unions to cover those eventualities.
+
+```py
+class Array(PU):
+    def __init__(self,pu : PU,n : int) -> None:
+        """
+        pu - PU for the elements of the array.
+
+        n - The maximum size of the array.
+        """
+        super().__init__()
+        self.pu, self.n = pu, n
+        self.size = 1 + self.pu.size * n # The extra field is the emptiness flag which differentiates empty from inactive arrays.
+
+    def pickle(self,xs,i,ar):
+        assert len(xs) <= self.n, "Pickling failure. The given array is too large."
+        if len(xs) == 0: ar[i] = 1
+        i += 1
+        for x in xs: self.pu.pickle(x,i,ar); i += self.pu.size
+    def unpickle(self,i,ar):
+        c_empty = ar[i]
+        assert c_empty == 0 or c_empty == 1, "Unpickling failure. The array emptiness flag should be 1 or 0."
+        c_empty = int(c_empty)
+        i += 1
+
+        xs = []
+        for j in range(self.n):
+            x,c_sub = self.pu.unpickle(i,ar)
+            if j == len(xs):
+                if c_sub == 1: xs.append(x)
+            else:
+                assert c_sub == 0, "Unpickling failure. Expected an inactive subsequence in the array unpickler."
+            i += self.pu.size
+        assert not (c_empty == 1 and 0 < len(xs)), "Unpickling failure. Empty arrays should not have active elements."
+        return xs, c_empty | min(1,len(xs))
+```
+
+The combinator needs some extra complexity to differentiate between inactive and empty arrays. During unpickling also needs to check that after the first inactive elements, no more active elements come up.
+
+Here is an example of them in action.
+
+```py
+suit = Int(4)
+rank = Int(13)
+card = Tuple(suit,rank)
+stack = BinInt(7)
+board = Array(card,5)
+print(serialize(Tuple(stack,card,card,board),(100,(0,0),(1,0),[(2,0),(3,0),(1,5),(2,2),(0,11)])))
+```
+```
+[1, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+```
+
+The number of cards passed into the array can be varied between 0 and 5 in the above example.
 
