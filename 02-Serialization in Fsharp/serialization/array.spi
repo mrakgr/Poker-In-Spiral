@@ -17,7 +17,7 @@ inl unit forall dim{number}. : pu dim () = pu {
 inl int forall dim {number}. size : pu dim dim =
     pu {size
         pickle = fun x (i,s) =>
-            if not (0 <= x && x < size) then failwith $"f'Pickling failure. Int value out of bounds. Got: {!x} Size: {!size}'"
+            if not (0 <= x && x < size) then failwith $"$\"Pickling failure. Int value out of bounds. Got: {!x} Size: {!size}\""
             set s (i + x) 1
         unpickle = fun (~from,s) =>
             inl nearTo = from+size
@@ -44,13 +44,13 @@ inl bin_int forall dim {number; int}. size : pu dim dim =
         | i16 => 15i16 | u16 => 16u16
         | i32 => 31i32 | u32 => 32u32
         | i64 => 63i64 | u64 => 64u64
-    if not (1 <= size && size <= size_max) then failwith $"f'The field size has to be in the [1,!size_max] range.'"
+    if not (1 <= size && size <= size_max) then failwith $"$\"The field size has to be in the [1,!size_max] range.\""
     pu {size
         pickle = fun ~x (~i,s) => join
             inl max_x : dim = 
                 inl q = 1 <<< conv (size - 1)
                 q + (q - 1)
-            if not (0 <= x && x < max_x) then failwith $"f'Pickle failure. Bin int value out of bounds. Got: {!x} Size: {!max_x}'"
+            if not (0 <= x && x < max_x) then failwith $"$\"Pickle failure. Bin int value out of bounds. Got: {!x} Size: {!max_x}\""
             loop.for {from=0; nearTo=size} (fun i' x =>
                 inl q = 1 <<< conv (size - i' - 1)
                 set s (i + i') (conv (x / q))
@@ -90,7 +90,7 @@ inl array forall dim {int; number} t. size (el : pu dim t) : pu dim (a dim t) =
                         len
                     ) 0
             assert (not (c_empty = 1 && 0 < tmp_len)) "Unpickling failure. Empty arrays should not have active elements."
-            $"!tmp[:!tmp_len]", c_empty ||| min 1 tmp_len
+            am.init tmp_len (index tmp), c_empty ||| min 1 tmp_len
         }
 
 inl pair (pu a') (pu b') =
@@ -156,8 +156,7 @@ inl (++) forall dim {number; int} t y. (a : pu dim t) (b : pu dim y) : pu dim (c
 inl size (pu p) = p.size
 
 inl serialize forall dim {number; int} t. (p : pu dim t) ~(x : t) : a dim f32 = join
-    inl size = p.size
-    inl ar = $"numpy.zeros(!size,dtype=numpy.float32)"
+    inl ar = create p.size
     p.pickle x (0,ar)
     ar
 

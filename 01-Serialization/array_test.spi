@@ -1,0 +1,73 @@
+type dim = i32
+union leduc_action = Fold | Call | Raise
+union leduc_seq = Action : leduc_action | Card : dim
+
+open serialization.array
+
+inl main () =
+    inl print x : () = $"print(!x)"
+    inl ser (pu : pu dim _) = serialize pu >> print
+    inl ser_seq (pu : pu dim _) x = x |> listm.map (serialize pu) |> (listm.toArray : _ -> a dim _) |> print
+    inl trip (pu : pu dim _) = round_trip_assert (pu : _ dim _)
+    inl trip_seq pu x = x |> listm.iter (trip pu)
+    inl unit = unit : pu dim _
+    ser unit ()
+    trip unit ()
+
+    ser int(5) 1
+    ser int(7) 5
+    trip int(5) 1
+    trip int(7) 5
+    
+    ser_seq bin_int(10) [0;1;5;123;654]
+    trip_seq bin_int(10) [0;1;5;123;654]
+
+    ser (int 5 ** bin_int 5 ** unit) (2,29,())
+    trip (int 5 ** bin_int 5 ** unit) (2,29,())
+
+    inl suit = int 4
+    inl rank = int 13
+    inl card = suit ** rank
+    inl stack = bin_int 7
+    ser (stack ** card ** card) (100,(0,0),(1,0))
+    trip (stack ** card ** card) (100,(0,0),(1,0))
+
+    inl suit = int 4
+    inl rank = int 13
+    inl card = suit ** rank
+    inl stack = bin_int 7
+    inl board = array 5 card
+    ser (stack ** card ** card ** board) (100,(0,0),(1,0),a ;[2,0;3,0;1,5;2,2;0,11])
+    trip (stack ** card ** card ** board) (100,(0,0),(1,0),a ;[2,0;3,0;1,5;2,2;0,11])
+
+    inl action : pu _ leduc_action = alt {Fold=unit; Call=unit; Raise=unit}
+    inl card = int 3
+    inl street = card ** array 4 action
+    inl streets = array 2 street
+
+    inl args = a ;[
+        0,a ;[Call;Raise;Raise;Call]
+        2,a ;[Call]
+        ]
+    ser streets args
+    trip streets args
+
+    inl observation : pu dim leduc_seq = alt {Card=card; Action=action}
+
+    inl seq = [
+        Card 0; Action Call; Action Raise; Action Raise; Action Call;
+        Card 2; Action Call
+        ]
+    ser_seq observation seq
+    trip_seq observation seq
+
+    inl rai = wrap {inp=(+) -2; out=(+) 2} int(9)
+    inl xs = [2;5;10]
+    ser_seq rai xs
+    trip_seq rai xs
+
+    inl rec' = wrap {inp=fun {a b} => a,b; out=fun (a,b) => {a b}} (int 5 ** int 5)
+    inl x = {a=1; b=3}
+    ser rec' x
+    trip rec' x
+    ()

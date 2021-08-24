@@ -1,0 +1,29 @@
+type dim = i32
+union leduc_action = Fold | Call | Raise
+union leduc_seq = Action : leduc_action | Card : dim
+
+open serialization.array
+
+inl main() =
+    inl print x : () = $"printfn \"%A\" !x"
+    inl unit = unit : pu dim _
+    inl action : pu dim leduc_action = alt {Fold=unit; Call=unit; Raise=unit}
+    inl card = int 3
+    inl street = card ** array 4 action
+    inl streets = array 2 street
+
+    inl args : a dim (dim * a dim leduc_action) = a ;[
+        0,a ;[Call;Raise;Raise;Call]
+        2,a ;[Call]
+        ]
+
+    inl run _ =
+        loop.for' {from=0i32; nearTo=100_000} fun _ =>
+            serialize streets args |> ignore
+    loop.for' {from=0i32; nearTo=100} run
+    inl watch : $"System.Diagnostics.Stopwatch" = $"new System.Diagnostics.Stopwatch()"
+    $"!watch.Start()"
+    run()
+    $"!watch.Stop()"
+    $"printfn \"%f\" (!watch.Elapsed.TotalSeconds)"
+    ()
