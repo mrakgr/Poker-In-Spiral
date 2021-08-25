@@ -5,7 +5,7 @@ union leduc_seq = Action : leduc_action | Card : dim
 open serialization.array
 
 inl main() =
-    inl print x : () = $"print(!x)"
+    inl print x : () = $"print(!x) " 
     inl unit = unit : pu dim _
     inl action : pu dim leduc_action = alt {Fold=unit; Call=unit; Raise=unit}
     inl card = int 3
